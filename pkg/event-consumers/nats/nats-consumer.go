@@ -18,6 +18,7 @@ package nats
 
 import (
 	"os"
+	"path/filepath"
 
 	"sync"
 
@@ -28,11 +29,14 @@ import (
 )
 
 var (
-	mutex     = &sync.Mutex{}
-	stopM     map[string](chan struct{})
-	stoppedM  map[string](chan struct{})
-	consumerM map[string]bool
-	url       string
+	mutex      = &sync.Mutex{}
+	stopM      map[string](chan struct{})
+	stoppedM   map[string](chan struct{})
+	consumerM  map[string]bool
+	url        string
+	clientCert string
+	clientKey  string
+	rootCAs    []string
 )
 
 func init() {
@@ -45,12 +49,25 @@ func init() {
 	if url == "" {
 		url = "nats://nats.nats-io.svc.cluster.local:4222"
 	}
+
+	certs := os.Getenv("NATS_CERTS")
+	if certs != "" {
+		clientCert = filepath.Join(certs, "client.crt")
+		clientKey = filepath.Join(certs, "client.key")
+		rootCAs = []string{filepath.Join(certs, "ca.crt")}
+	}
 }
 
 // createConsumerProcess gets messages for a topic from the NATS server and send the payload to function service
 func createConsumerProcess(topic, funcName, ns, queueGroupID string, clientset kubernetes.Interface, stopchan, stoppedchan chan struct{}) {
-
-	nc, err := nats.Connect(url)
+	var opts []nats.Option
+	if len(rootCAs) > 0 {
+		opts = append(opts, nats.RootCAs(rootCAs...))
+	}
+	if clientCert != "" && clientKey != "" {
+		opts = append(opts, nats.ClientCert(clientCert, clientKey))
+	}
+	nc, err := nats.Connect(url, opts...)
 	if err != nil {
 		logrus.Fatalf("Failed to initialize nats client to server %v due to %v", url, err)
 	}
