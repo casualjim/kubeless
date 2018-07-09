@@ -43,15 +43,20 @@ var publishCmd = &cobra.Command{
 			logrus.Fatal(err)
 		}
 
-		err = publishTopic(topic, data, url)
+		nopts, err := newNatsOpts(cmd)
+		if err != nil {
+			logrus.Fatal(err)
+		}
+
+		err = publishTopic(topic, data, url, nopts.Options()...)
 		if err != nil {
 			logrus.Fatal("Failed to publish message to topic: ", err)
 		}
 	},
 }
 
-func publishTopic(topic, message, url string) error {
-	nc, err := nats.Connect(url)
+func publishTopic(topic, message, url string, opts ...nats.Option) error {
+	nc, err := nats.Connect(url, opts...)
 	if err != nil {
 		logrus.Fatal(err)
 	}
@@ -65,10 +70,56 @@ func publishTopic(topic, message, url string) error {
 	return nil
 }
 
+func newNatsOpts(cmd *cobra.Command) (*natsOpts, error) {
+	fls := cmd.Flags()
+	n := &natsOpts{}
+	if fls.Lookup("tls-key") != nil && fls.Lookup("tls-cert") != nil {
+		key, err := fls.GetString("tls-key")
+		if err != nil {
+			return nil, err
+		}
+		cert, err := fls.GetString("tls-cert")
+		if err != nil {
+			return nil, err
+		}
+		n.TLSKey = key
+		n.TLSCert = cert
+	}
+	if fls.Lookup("ca-cert") != nil {
+		caCerts, err := fls.GetStringSlice("ca-cert")
+		if err != nil {
+			return nil, err
+		}
+		n.CACerts = caCerts
+	}
+	return n, nil
+}
+
+type natsOpts struct {
+	TLSCert string
+	TLSKey  string
+	CACerts []string
+}
+
+func (n *natsOpts) Options() []nats.Option {
+	var opts []nats.Option
+	if len(n.CACerts) > 0 {
+		opts = append(opts, nats.RootCAs(n.CACerts...))
+	}
+	if n.TLSCert != "" && n.TLSKey != "" {
+		opts = append(opts, nats.ClientCert(n.TLSCert, n.TLSKey))
+	}
+	return opts
+}
+
 func init() {
-	publishCmd.Flags().StringP("message", "", "", "Specify message to be published")
-	publishCmd.Flags().StringP("topic", "", "kubeless", "Specify topic name")
-	publishCmd.Flags().StringP("url", "", "", "Specify NATS server details for e.g nats://localhost:4222)")
+	fls := publishCmd.Flags()
+	fls.StringP("message", "", "", "Specify message to be published")
+	fls.StringP("topic", "", "kubeless", "Specify topic name")
+	fls.StringP("url", "", "", "Specify NATS server details for e.g nats://localhost:4222)")
+	fls.StringP("tls-cert", "", "", "Specify NATS client TLS public key")
+	fls.StringP("tls-key", "", "", "Specify NATS client TLS private key")
+	fls.StringSliceP("ca-cert", "", nil, "Specify NATS client trusted CA public keys")
 	publishCmd.MarkFlagRequired("url")
 	publishCmd.MarkFlagRequired("topic")
 	publishCmd.MarkFlagRequired("message")
